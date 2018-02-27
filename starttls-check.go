@@ -2,9 +2,11 @@ package main
 
 import (
     "flag"
-    "os"
+    "io/ioutil"
     "fmt"
+    "os"
     "net"
+    "net/http"
     "net/smtp"
     "crypto/tls"
 )
@@ -34,6 +36,12 @@ type Check interface {
 //  4. TLS version up-to-date
 //  5. Perfect forward secrecy
 type StartTLSCheck struct {
+    Address string
+    Reports []Report
+}
+
+// Checks whether domain has MTA-STS support.
+type MTASTSCheck struct {
     Address string
     Reports []Report
 }
@@ -178,6 +186,78 @@ func (c StartTLSCheck) run(done chan CheckResult) {
     }
 }
 
+func (c *MTASTSCheck) report_error(message string) {
+    c.Reports = append(c.Reports, Report { Message: fmt.Sprintf("  ERROR:   %s", message) })
+}
+
+func (c *MTASTSCheck) report_failure(message string) {
+    c.Reports = append(c.Reports, Report { Message: fmt.Sprintf("  FAILURE: %s", message) })
+}
+
+func (c *MTASTSCheck) report_success(message string) {
+    c.Reports = append(c.Reports, Report { Message: fmt.Sprintf("  SUCCESS: %s", message) })
+}
+
+func validateMTASTSRecord (records []string) bool {
+}
+
+func validateTLSRPTRecord (records []string) bool {
+}
+
+func (c *MTASTSCheck) perform_checks() {
+    // CHECK: TXT record exists at _mta-sts
+    results, err := net.LookupTXT(fmt.Sprintf("_mta-sts.%s", c.Address)) // TODO: put subdomain in constant
+    if err != nil {
+        c.report_failure(fmt.Sprintf("No TXT record found for _mta-sts.%s", c.Address))
+    } else {
+        c.report_success(fmt.Sprintf("Found TXT records for _mta-sts.%s", c.Address))
+        // CHECK (TODO): MTA-STS TXT record well-formatted
+        if c.validateMTASTSRecord() {
+            c.report_success(fmt.Sprintf(""))
+        } else {
+        }
+    }
+    // CHECK: TXT record exists at _smtp-tlsrpt
+    results, err = net.LookupTXT(fmt.Sprintf("_smtp-tlsrpt.%s", c.Address)) // TODO: put subdomain in constant
+    if err != nil {
+        c.report_failure(fmt.Sprintf("No TXT record found for _smtp-tlsrpt.%s", c.Address))
+    } else {
+        c.report_success(fmt.Sprintf("Found TXT records for _smtp-tlsrpt.%s", c.Address))
+        // CHECK (TODO): TLSRPT TXT record well-formatted
+        if c.validateTLSRPTRecord() {
+        } else {
+        }
+        // CHECK (TODO): TLSRPT endpoint works for submitting RPTs
+    }
+    fmt.Println(results)
+    // CHECK: 'mta-sts.<address>/.well-known/mta-sts.txt' exists
+    policy_file, err := http.Get(fmt.Sprintf("https://mta-sts.%s/.well-known/mta-sts.txt", c.Address))
+    if err != nil {
+        c.report_failure(fmt.Sprintf("Could not fetch policy file from mta-sts.%s/.well-known/mta-sts.txt %q", c.Address, err))
+    } else {
+        c.report_success(fmt.Sprintf("Retrieved policy file from mta-sts.%s/.well-known/mta-sts.txt", c.Address))
+        content, err := ioutil.ReadAll(policy_file.Body)
+        if err != nil {
+            c.report_error("Error reading policy file body.")
+            return
+        }
+        fmt.Println(content)
+        // CHECK (TODO): MTA-STS policy file well-formatted
+    }
+}
+
+func (c MTASTSCheck) run(done chan CheckResult) {
+    c.perform_checks()
+    done <- CheckResult{
+        title: c.title(),
+        reports: c.Reports,
+    }
+}
+
+func (c MTASTSCheck) title() string {
+    return fmt.Sprintf("=> MTA-STS Check for %s", c.Address)
+}
+
 // Transforms MX record's hostname into a regular domain address.
 // In particular, absolute domains end with ".", so we can remove the dot.
 func mxToAddr(mx string) string {
@@ -198,14 +278,18 @@ func main() {
     }
     checks := []Check{}
 
+    // Add MTASTS check.
+    checks = append(checks, MTASTSCheck{ Address: *domainStr, Reports: []Report{} })
+
     // MX record lookup.
     mxs, err := net.LookupMX(*domainStr)
     if err != nil {
         os.Exit(1)
     }
+    // Add STARTTLS checks.
     for _, mx := range mxs {
         fmt.Println("MX:", mx.Host)
-        checks = append(checks, StartTLSCheck{ Address: mxToAddr(mx.Host), Reports: []Report{} })
+        // checks = append(checks, StartTLSCheck{ Address: mxToAddr(mx.Host), Reports: []Report{} })
     }
 
     // Run checks for every domain from MX lookup!
