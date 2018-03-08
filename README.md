@@ -16,19 +16,19 @@ And we also check if your domain supports MTA-STS+TLSRPT by
  - Looking for and validating a policy file hosted at
      `https://mta-sts.<domain>/.well-known/mta-sts.txt`
 
-## Building and running
+## Build
 
-To build:
 ```
 go get && go build
 ```
 
-To run:
+## Run
+
 ```
 ./starttls-check -domain <email domain> 
 ```
 
-For instance, running `./starttls-check -domain gmail.com -starttls` will
+For instance, running `./starttls-check -domain gmail.com` will
 check for MTA-STS support, and the TLS configurations (over SMTP) on
 port 25 for all the MX domains for `gmail.com`.
 
@@ -51,10 +51,25 @@ However, running:
 ```
 will only perform the TLS checks.
 
+### Running sets of checks
+```
+./starttls-check -domain-file domains.txt
+```
+Will run the check across all of the e-mail domains in `domains.txt`,
+and aggregate a report. The tool expects one domain on each line.
+
+## Generating policies
+You can also use this tool to generate a policy file for you.
+```
+./starttls-check -domain example.com -generate policy.txt
+
+# Generate JSON policy file
+./starttls-check -domain example.com -generate policy.json -json
+```
 
 ## TODO
  - [X] Check MTA-STS support
  - [ ] Check DANE
- - [ ] Policy generator
+ - [X] Policy generator
  - [ ] Present recommendations for issues
  - [ ] Tests
