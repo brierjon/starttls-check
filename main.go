@@ -7,6 +7,7 @@ import (
     "net"
     "os"
     "strings"
+    "time"
     "encoding/json"
 )
 
@@ -136,11 +137,47 @@ func performChecksFor(domain string, doMTASTSCheck bool, doSTARTTLSCheck bool) D
     return report
 }
 
+// Wrapper around performChecksFor that pipes result into a channel.
+func performChecksForChan(domain string, doMTASTSCheck bool, doSTARTTLSCheck bool, done chan<- DomainReport) {
+    done <- performChecksFor(domain, doMTASTSCheck, doSTARTTLSCheck)
+}
+
+// Perform a check on a particular domain, and time-out if it takse more than 20 seconds.
+func domainCheckWorker(doMTASTSCheck bool, doSTARTTLSCheck bool, domains <-chan string, result chan<- DomainReport) {
+    done := make(chan DomainReport)
+    for domain := range domains {
+        go performChecksForChan(domain, doMTASTSCheck, doSTARTTLSCheck, done)
+        select {
+            case ret := <-done:
+                result <- ret
+            case <-time.After(20 * time.Second):
+                fmt.Printf("TIMED out checking %s\n", domain)
+                result <- DomainReport {
+                    Domain: domain,
+                    CheckResults: make(map[string]CheckResult),
+                }
+        }
+    }
+}
+
+// Performs checks for a set of domains.
+// 16 worker threads performing these queries.
 func performChecksForDomains(domains []string, doMTASTSCheck bool, doSTARTTLSCheck bool) map[string]DomainReport {
+    poolSize := 16
+    jobs := make(chan string, 100)
+    results := make(chan DomainReport, 100)
     domainResults := make(map[string]DomainReport)
+    for worker := 1; worker <= poolSize; worker++ {
+        go domainCheckWorker(doMTASTSCheck, doSTARTTLSCheck, jobs, results)
+    }
     for _, domain := range domains {
-        domainResults[domain] = performChecksFor(domain, doMTASTSCheck, doSTARTTLSCheck)
-        b, err := json.Marshal(domainResults[domain])
+        jobs <- domain
+    }
+    close(jobs)
+    for i := 0; i < len(domains); i++ {
+        result := <-results
+        domainResults[result.Domain] = result
+        b, err := json.Marshal(result)
         if err != nil {
             fmt.Printf("%q", err)
         } else {
@@ -169,7 +206,6 @@ func domainsFromFile(filename string) ([]string, error) {
     return filterDomains, nil
 }
 
-//
 // Run a series of security checks on an MTA domain.
 // =================================================
 // Currently includes:
